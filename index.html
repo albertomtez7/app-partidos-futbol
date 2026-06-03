@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#1f6f43" />
+    <title>Partidos 5v5</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Futbol amigos</p>
+        <h1>Partidos 5v5</h1>
+      </div>
+      <button class="icon-button" id="exportBtn" title="Exportar datos" aria-label="Exportar datos">↓</button>
+    </header>
+
+    <main>
+      <section class="pitch">
+        <div class="pitch-line center"></div>
+        <div class="pitch-circle"></div>
+        <div class="score-card">
+          <span>Blanco</span>
+          <strong id="whiteAvg">0.0</strong>
+          <small>nivel medio</small>
+        </div>
+        <div class="score-card dark">
+          <span>Negro</span>
+          <strong id="blackAvg">0.0</strong>
+          <small>nivel medio</small>
+        </div>
+      </section>
+
+      <nav class="tabs" aria-label="Secciones">
+        <button class="tab active" data-tab="players">Jugadores</button>
+        <button class="tab" data-tab="match">Partido</button>
+        <button class="tab" data-tab="history">Histórico</button>
+      </nav>
+
+      <section class="panel active" id="players">
+        <form class="form-grid" id="playerForm">
+          <label>
+            Nombre
+            <input id="playerName" autocomplete="off" required placeholder="Ej. Carlos" />
+          </label>
+          <label>
+            Nivel inicial
+            <input id="playerLevel" type="number" min="0" max="10" step="0.1" value="5" required />
+          </label>
+          <button type="submit">Añadir</button>
+        </form>
+        <div class="section-head">
+          <h2>Plantilla</h2>
+          <span id="playerCount">0 jugadores</span>
+        </div>
+        <div class="list" id="playersList"></div>
+      </section>
+
+      <section class="panel" id="match">
+        <div class="teams" id="teamsArea" hidden>
+          <div class="team white">
+            <h3>Equipo blanco</h3>
+            <div id="whiteTeam"></div>
+          </div>
+          <div class="team black">
+            <h3>Equipo negro</h3>
+            <div id="blackTeam"></div>
+          </div>
+        </div>
+
+        <form id="resultForm" class="result-form" hidden>
+          <div class="section-head">
+            <h2>Resultado</h2>
+            <span>Rating ajustado por nivel rival</span>
+          </div>
+          <div class="score-inputs">
+            <label>Goles blanco <input id="whiteScore" type="number" min="0" value="0" /></label>
+            <label>Goles negro <input id="blackScore" type="number" min="0" value="0" /></label>
+          </div>
+          <label>
+            MVP
+            <select id="mvpSelect">
+              <option value="">Sin MVP</option>
+            </select>
+          </label>
+          <div id="goalInputs" class="goal-inputs"></div>
+          <button type="submit">Guardar partido y actualizar niveles</button>
+        </form>
+
+        <div class="section-head">
+          <h2>Inscripción</h2>
+          <span id="selectedCount">0/10</span>
+        </div>
+        <div class="list compact" id="signupList"></div>
+        <div class="actions">
+          <button id="clearSignupBtn" class="secondary">Limpiar</button>
+          <button id="makeTeamsBtn">Crear equipos</button>
+        </div>
+      </section>
+
+      <section class="panel" id="history">
+        <div class="section-head">
+          <h2>Ranking</h2>
+          <button id="importBtn" class="secondary small">Importar</button>
+        </div>
+        <input id="importFile" type="file" accept="application/json" hidden />
+        <div class="list compact" id="rankingList"></div>
+        <div class="section-head">
+          <h2>Partidos guardados</h2>
+          <span id="matchCount">0</span>
+        </div>
+        <div class="list" id="historyList"></div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
