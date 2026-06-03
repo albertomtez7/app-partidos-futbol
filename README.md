@@ -6,7 +6,7 @@ App para organizar partidos de futbol 5 contra 5 con amigos.
 
 - Jugadores ilimitados con nivel inicial manual de 0 a 10.
 - Inscripcion de exactamente 10 jugadores por partido.
-- Equipos blanco y negro generados de forma aleatoria y equilibrada por nivel.
+- Equipos blanco y negro generados de forma aleatoria, equilibrada por nivel y evitando repetir grupos del ultimo partido.
 - Registro de resultado, goles por jugador y MVP.
 - Actualizacion automatica de nivel con escala 0-10:
   - El resultado pesa un 80%.
@@ -14,8 +14,13 @@ App para organizar partidos de futbol 5 contra 5 con amigos.
   - El MVP pesa un 10%.
   - La subida o bajada por resultado se ajusta segun el nivel medio del equipo rival.
 - Ranking e historico de partidos guardado en el dispositivo.
+- Sincronizacion con Supabase para compartir datos entre dispositivos.
 - Exportar e importar datos en JSON.
 - Manifest y service worker para instalarla como PWA.
+
+## Supabase
+
+La app usa Supabase para guardar jugadores, partidos, equipos generados e historico compartido. Al publicar cambios en GitHub Pages, sube siempre `app.js` y `sw.js` para que la version online se actualice correctamente.
 
 ## Uso en Android
 

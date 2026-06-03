@@ -5,6 +5,10 @@ const DEFAULT_LEVEL = 5;
 const RESULT_WEIGHT = 0.8;
 const GOAL_WEIGHT = 0.1;
 const MVP_WEIGHT = 0.1;
+const BALANCE_TOLERANCE = 0.4;
+const SUPABASE_URL = "https://rumvrsonnxujcxbrizyb.supabase.co";
+const SUPABASE_KEY = "sb_publishable_vHh6ilTt_-KHGC8TKrwqnQ_pYhC-ntf";
+const SUPABASE_REST_URL = `${SUPABASE_URL}/rest/v1`;
 
 const state = loadState();
 normalizeState();
@@ -48,24 +52,32 @@ document.querySelectorAll(".tab").forEach((tab) => {
   });
 });
 
-els.playerForm.addEventListener("submit", (event) => {
+els.playerForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const name = els.playerName.value.trim();
   const level = clamp(Number(els.playerLevel.value), MIN_LEVEL, MAX_LEVEL);
   if (!name) return;
-  state.players.push({
+  const player = {
     id: createId(),
     name,
     level,
     initialLevel: level,
     stats: { played: 0, wins: 0, losses: 0, draws: 0, goals: 0, mvps: 0 },
-  });
+  };
+  state.players.push(player);
   els.playerForm.reset();
   els.playerLevel.value = DEFAULT_LEVEL;
   saveAndRender("Jugador añadido");
+  try {
+    const savedPlayer = await createRemotePlayer(player);
+    player.id = savedPlayer.id;
+    saveAndRender("Jugador añadido");
+  } catch (error) {
+    showToast(`Guardado local: ${error.message}`);
+  }
 });
 
-els.makeTeamsBtn.addEventListener("click", () => {
+els.makeTeamsBtn.addEventListener("click", async () => {
   const players = state.players.filter((player) => selectedIds.has(player.id));
   if (players.length !== 10) {
     showToast("Selecciona exactamente 10 jugadores");
@@ -74,6 +86,11 @@ els.makeTeamsBtn.addEventListener("click", () => {
   currentTeams = makeBalancedTeams(players);
   renderTeams();
   showToast("Equipos generados");
+  try {
+    await createRemoteTeamDraft(currentTeams);
+  } catch (error) {
+    showToast(`Equipos solo en local: ${error.message}`);
+  }
 });
 
 els.clearSignupBtn.addEventListener("click", () => {
@@ -82,7 +99,7 @@ els.clearSignupBtn.addEventListener("click", () => {
   renderAll();
 });
 
-els.resultForm.addEventListener("submit", (event) => {
+els.resultForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!currentTeams) return;
   const whiteScore = Math.max(0, Number(els.whiteScore.value) || 0);
@@ -97,12 +114,18 @@ els.resultForm.addEventListener("submit", (event) => {
     showToast("Los goles de cada equipo deben coincidir con el marcador");
     return;
   }
-  saveMatch(whiteScore, blackScore, goalsByPlayer, els.mvpSelect.value);
+  const match = saveMatch(whiteScore, blackScore, goalsByPlayer, els.mvpSelect.value);
   selectedIds.clear();
   currentTeams = null;
   els.whiteScore.value = 0;
   els.blackScore.value = 0;
   saveAndRender("Partido guardado");
+  try {
+    await createRemoteMatch(match);
+    await syncFromSupabase(false);
+  } catch (error) {
+    showToast(`Partido guardado solo en local: ${error.message}`);
+  }
 });
 
 els.exportBtn.addEventListener("click", () => {
@@ -169,6 +192,166 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+async function syncFromSupabase(showMessage = true) {
+  try {
+    const [remotePlayers, remoteMatches, remoteMatchPlayers] = await Promise.all([
+      supabaseRequest("players?select=*&order=name.asc"),
+      supabaseRequest("matches?select=*&order=created_at.desc"),
+      supabaseRequest("match_players?select=*&order=id.asc"),
+    ]);
+    state.players = remotePlayers.map(mapRemotePlayer);
+    state.matches = mapRemoteMatches(remoteMatches, remoteMatchPlayers);
+    selectedIds = new Set([...selectedIds].filter((id) => state.players.some((player) => player.id === id)));
+    currentTeams = null;
+    saveAndRender(showMessage ? "Datos actualizados desde Supabase" : "");
+  } catch (error) {
+    showToast(`Usando datos locales: ${error.message}`);
+  }
+}
+
+async function supabaseRequest(path, options = {}) {
+  const response = await fetch(`${SUPABASE_REST_URL}/${path}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Supabase ${response.status}`);
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+async function createRemotePlayer(player) {
+  const [savedPlayer] = await supabaseRequest("players?select=*", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      name: player.name,
+      level: player.level,
+      initial_level: player.initialLevel,
+    }),
+  });
+  return savedPlayer;
+}
+
+async function deleteRemotePlayer(playerId) {
+  await supabaseRequest(`players?id=eq.${encodeURIComponent(playerId)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
+async function createRemoteTeamDraft(teams) {
+  await supabaseRequest("team_drafts", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      white_player_ids: teams.white.map((player) => player.id),
+      black_player_ids: teams.black.map((player) => player.id),
+    }),
+  });
+}
+
+async function createRemoteMatch(match) {
+  const [savedMatch] = await supabaseRequest("matches?select=*", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      white_score: match.whiteScore,
+      black_score: match.blackScore,
+      winner: match.winner,
+    }),
+  });
+  const matchPlayers = match.players.map((player) => ({
+    match_id: savedMatch.id,
+    player_id: player.id,
+    player_name: player.name,
+    team: player.team,
+    level_before: player.levelBefore,
+    level_after: player.levelAfter,
+    goals: player.goals,
+    mvp: player.mvp,
+    delta: player.delta,
+  }));
+  await supabaseRequest("match_players", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(matchPlayers),
+  });
+  await Promise.all(match.players.map((player) => updateRemotePlayerAfterMatch(player)));
+}
+
+async function updateRemotePlayerAfterMatch(matchPlayer) {
+  const stored = state.players.find((player) => player.id === matchPlayer.id);
+  if (!stored) return;
+  await supabaseRequest(`players?id=eq.${encodeURIComponent(matchPlayer.id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      level: stored.level,
+      played: stored.stats.played,
+      wins: stored.stats.wins,
+      losses: stored.stats.losses,
+      draws: stored.stats.draws,
+      goals: stored.stats.goals,
+      mvps: stored.stats.mvps,
+    }),
+  });
+}
+
+function mapRemotePlayer(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    level: Number(row.level),
+    initialLevel: Number(row.initial_level),
+    stats: {
+      played: row.played,
+      wins: row.wins,
+      losses: row.losses,
+      draws: row.draws,
+      goals: row.goals,
+      mvps: row.mvps,
+    },
+  };
+}
+
+function mapRemoteMatches(matches, matchPlayers) {
+  const playersByMatch = new Map();
+  matchPlayers.forEach((row) => {
+    if (!playersByMatch.has(row.match_id)) playersByMatch.set(row.match_id, []);
+    playersByMatch.get(row.match_id).push({
+      id: row.player_id,
+      name: row.player_name,
+      team: row.team,
+      levelBefore: Number(row.level_before),
+      levelAfter: Number(row.level_after),
+      goals: row.goals,
+      mvp: row.mvp,
+      delta: Number(row.delta),
+    });
+  });
+  return matches.map((match) => {
+    const players = playersByMatch.get(match.id) || [];
+    return {
+      id: match.id,
+      date: match.created_at,
+      whiteScore: match.white_score,
+      blackScore: match.black_score,
+      winner: match.winner,
+      whiteIds: players.filter((player) => player.team === "white").map((player) => player.id),
+      blackIds: players.filter((player) => player.team === "black").map((player) => player.id),
+      players,
+    };
+  });
+}
+
 function saveAndRender(message) {
   saveState();
   renderAll();
@@ -200,11 +383,16 @@ function renderPlayers() {
       </div>
       <button class="secondary small" type="button" aria-label="Borrar ${escapeHtml(player.name)}">Borrar</button>
     `;
-    row.querySelector("button").addEventListener("click", () => {
+    row.querySelector("button").addEventListener("click", async () => {
       state.players = state.players.filter((item) => item.id !== player.id);
       selectedIds.delete(player.id);
       currentTeams = null;
       saveAndRender("Jugador borrado");
+      try {
+        await deleteRemotePlayer(player.id);
+      } catch (error) {
+        showToast(`Borrado solo en local: ${error.message}`);
+      }
     });
     els.playersList.append(row);
   });
@@ -246,15 +434,64 @@ function makeBalancedTeams(players) {
   const shuffled = shuffle(players);
   let best = null;
   const combos = combinations(shuffled, 5);
+  const previousMatch = state.matches[0] || null;
+  const sameTenAsPrevious = previousMatch ? samePlayerSet(players, previousMatch) : false;
+  const evaluated = [];
+
   combos.forEach((white) => {
     const whiteIds = new Set(white.map((player) => player.id));
     const black = shuffled.filter((player) => !whiteIds.has(player.id));
     const diff = Math.abs(teamLevel(white) - teamLevel(black));
-    if (!best || diff < best.diff || (diff === best.diff && Math.random() > 0.5)) {
-      best = { white, black, diff };
+    const repeatScore = previousMatch ? calculateRepeatScore(white, black, previousMatch) : 0;
+    evaluated.push({ white, black, diff, repeatScore });
+  });
+
+  const candidates = sameTenAsPrevious
+    ? evaluated.filter((candidate) => candidate.repeatScore.maxRepeatedMates <= 3)
+    : evaluated;
+  const pool = candidates.length ? candidates : evaluated;
+
+  pool.forEach((candidate) => {
+    if (
+      !best ||
+      candidate.diff < best.diff - BALANCE_TOLERANCE ||
+      (Math.abs(candidate.diff - best.diff) <= BALANCE_TOLERANCE &&
+        candidate.repeatScore.totalRepeatedMates < best.repeatScore.totalRepeatedMates) ||
+      (Math.abs(candidate.diff - best.diff) <= BALANCE_TOLERANCE &&
+        candidate.repeatScore.totalRepeatedMates === best.repeatScore.totalRepeatedMates &&
+        Math.random() > 0.5)
+    ) {
+      best = candidate;
     }
   });
   return best;
+}
+
+function samePlayerSet(players, match) {
+  const currentIds = new Set(players.map((player) => player.id));
+  const previousIds = new Set([...(match.whiteIds || []), ...(match.blackIds || [])]);
+  if (currentIds.size !== previousIds.size) return false;
+  return [...currentIds].every((id) => previousIds.has(id));
+}
+
+function calculateRepeatScore(white, black, match) {
+  const previousWhite = new Set(match.whiteIds || []);
+  const previousBlack = new Set(match.blackIds || []);
+  const currentTeams = [white, black].map((team) => team.map((player) => player.id));
+  let totalRepeatedMates = 0;
+  let maxRepeatedMates = 0;
+
+  currentTeams.forEach((teamIds) => {
+    teamIds.forEach((playerId) => {
+      const previousTeam = previousWhite.has(playerId) ? previousWhite : previousBlack.has(playerId) ? previousBlack : null;
+      if (!previousTeam) return;
+      const repeatedMates = teamIds.filter((mateId) => mateId !== playerId && previousTeam.has(mateId)).length;
+      totalRepeatedMates += repeatedMates;
+      maxRepeatedMates = Math.max(maxRepeatedMates, repeatedMates);
+    });
+  });
+
+  return { totalRepeatedMates, maxRepeatedMates };
 }
 
 function renderTeams() {
@@ -342,7 +579,7 @@ function saveMatch(whiteScore, blackScore, goalsByPlayer, mvpId) {
       rivalTeamAvg,
     };
   });
-  state.matches.unshift({
+  const match = {
     id: createId(),
     date: new Date().toISOString(),
     whiteScore,
@@ -351,7 +588,9 @@ function saveMatch(whiteScore, blackScore, goalsByPlayer, mvpId) {
     whiteIds,
     blackIds,
     players: playerSnapshots,
-  });
+  };
+  state.matches.unshift(match);
+  return match;
 }
 
 function calculateRatingDelta({ team, winner, goals, isMvp, playerTeamAvg, rivalTeamAvg }) {
@@ -483,3 +722,4 @@ if ("serviceWorker" in navigator) {
 }
 
 renderAll();
+syncFromSupabase(false);
