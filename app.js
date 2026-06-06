@@ -1091,22 +1091,20 @@ function renderHistory() {
 
     // Summary (always visible, clickable)
     const summary = document.createElement("div");
-    summary.style.cssText = "padding:12px;cursor:pointer;border-bottom:1px solid var(--line)";
+    summary.style.cssText = "padding:12px;cursor:pointer;border-bottom:1px solid var(--line);text-align:center";
     summary.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <div class="meta">${formatDate(match.date)}</div>
         <span class="chevron" style="font-size:16px;transition:transform .2s">▾</span>
       </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
-        <strong style="font-size:20px">⬜ ${match.whiteScore} — ${match.blackScore} ⬛</strong>
-        <span style="font-size:12px;font-weight:700;color:var(--grass)">${winner === "Empate" ? "Empate" : `Gana ${winner}`}</span>
-      </div>
+      <div style="font-size:22px;font-weight:800;letter-spacing:1px">⬜ ${match.whiteScore} — ${match.blackScore} ⬛</div>
+      <div style="font-size:12px;font-weight:700;color:var(--grass);margin-top:4px">${winner === "Empate" ? "Empate" : `Gana ${winner}`}</div>
     `;
     row.append(summary);
 
     // Detail (hidden by default)
     const detail = document.createElement("div");
-    detail.style.cssText = "display:none;padding:12px;gap:10px";
+    detail.style.cssText = "display:none;padding:12px;gap:10px;flex-direction:column";
 
     // Teams grid full width
     const teamsGrid = document.createElement("div");
@@ -1140,7 +1138,7 @@ function renderHistory() {
     detail.append(btnRow);
     detail.style.display = "none";
     // Override display to use grid when shown
-    detail._show = () => { detail.style.display = "grid"; };
+    detail._show = () => { detail.style.display = "flex"; detail.style.flexDirection = "column"; };
     detail._hide = () => { detail.style.display = "none"; };
     row.append(detail);
 
