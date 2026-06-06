@@ -91,7 +91,7 @@ function selectGroup(groupId) {
   els.groupEyebrow.textContent = "Futbol amigos";
   els.groupTitle.textContent = `${currentGroup.name} · ${currentGroup.teamSize}v${currentGroup.teamSize}`;
   // Update selectedCount label
-  els.selectedCount.textContent = `0/${currentGroup.teamSize * 2}`;
+  els.selectedCount.textContent = `0 (mín. ${currentGroup.teamSize * 2})`;
   renderAll();
   syncFromSupabase(false);
 }
@@ -131,12 +131,13 @@ els.playerForm.addEventListener("submit", async (event) => {
 
 // ── Make teams ───────────────────────────────────────────────────
 els.makeTeamsBtn.addEventListener("click", async () => {
-  const maxPlayers = currentGroup.teamSize * 2;
+  const minPlayers = currentGroup.teamSize * 2;
   const players = state.players.filter((player) => selectedIds.has(player.id));
-  if (players.length !== maxPlayers) {
-    showToast(`Selecciona exactamente ${maxPlayers} jugadores`);
+  if (players.length < minPlayers) {
+    showToast(`Selecciona al menos ${minPlayers} jugadores`);
     return;
   }
+
   const generatedTeams = makeBalancedTeams(players);
   try {
     await createRemoteTeamDraft(generatedTeams);
@@ -528,8 +529,8 @@ function renderPlayers() {
 
 function renderSignup() {
   if (!currentGroup) return;
-  const maxPlayers = currentGroup.teamSize * 2;
-  els.selectedCount.textContent = `${selectedIds.size}/${maxPlayers}`;
+  const minPlayers = currentGroup.teamSize * 2;
+  els.selectedCount.textContent = `${selectedIds.size} (mín. ${minPlayers})`;
   els.signupList.innerHTML = "";
   if (!state.players.length) {
     els.signupList.append(emptyRow("No hay jugadores disponibles."));
@@ -546,11 +547,7 @@ function renderSignup() {
       <input class="check" type="checkbox" ${selectedIds.has(player.id) ? "checked" : ""} />
     `;
     row.querySelector("input").addEventListener("change", (event) => {
-      if (event.target.checked && selectedIds.size >= maxPlayers) {
-        event.target.checked = false;
-        showToast(`Ya hay ${maxPlayers} inscritos`);
-        return;
-      }
+      // No cap — allow any even number above minimum
       event.target.checked ? selectedIds.add(player.id) : selectedIds.delete(player.id);
       currentTeams = null;
       renderSignup();
@@ -562,7 +559,7 @@ function renderSignup() {
 
 function makeBalancedTeams(players) {
   const shuffled = shuffle(players);
-  const size = currentGroup.teamSize;
+  const size = Math.floor(players.length / 2); // one team may have one extra player
   let best = null;
   const combos = combinations(shuffled, size);
   const previousMatch = state.matches[0] || null;
@@ -1089,31 +1086,31 @@ function renderHistory() {
     const blackPlayers = match.players.filter((p) => p.team === "black");
     const mvpPlayer = match.players.find((p) => p.mvp);
     const goalscorers = match.players.filter((p) => p.goals > 0)
-      .map((p) => `${escapeHtml(p.name)} (${p.goals})`).join(", ");
+      .map((p) => `${"⚽".repeat(p.goals)} ${escapeHtml(p.name)}`).join("<br>");
     const winner = match.winner === "white" ? "⬜ Blanco" : match.winner === "black" ? "⬛ Negro" : "Empate";
 
     // Summary (always visible, clickable)
     const summary = document.createElement("div");
-    summary.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:12px;cursor:pointer;gap:8px";
+    summary.style.cssText = "padding:12px;cursor:pointer;border-bottom:1px solid var(--line)";
     summary.innerHTML = `
-      <div>
-        <strong style="font-size:15px">⬜ ${match.whiteScore} — ${match.blackScore} ⬛</strong>
-        <div class="meta" style="margin-top:2px">${formatDate(match.date)}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <span style="font-size:12px;font-weight:700;color:var(--grass)">${winner === "Empate" ? "Empate" : `Gana ${winner}`}</span>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="meta">${formatDate(match.date)}</div>
         <span class="chevron" style="font-size:16px;transition:transform .2s">▾</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+        <strong style="font-size:20px">⬜ ${match.whiteScore} — ${match.blackScore} ⬛</strong>
+        <span style="font-size:12px;font-weight:700;color:var(--grass)">${winner === "Empate" ? "Empate" : `Gana ${winner}`}</span>
       </div>
     `;
     row.append(summary);
 
     // Detail (hidden by default)
     const detail = document.createElement("div");
-    detail.style.cssText = "display:none;padding:0 12px 12px";
+    detail.style.cssText = "display:none;padding:12px;gap:10px";
 
-    // Teams grid
+    // Teams grid full width
     const teamsGrid = document.createElement("div");
-    teamsGrid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px";
+    teamsGrid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
     ["white","black"].forEach((color) => {
       const players = color === "white" ? whitePlayers : blackPlayers;
       const box = document.createElement("div");
@@ -1124,12 +1121,12 @@ function renderHistory() {
     });
     detail.append(teamsGrid);
 
-    // Stats row
+    // Stats row full width
     const stats = document.createElement("div");
-    stats.style.cssText = "display:grid;gap:4px;margin-bottom:10px;padding:8px;background:var(--wash);border-radius:var(--radius)";
+    stats.style.cssText = "padding:8px;background:var(--wash);border-radius:var(--radius)";
     stats.innerHTML = `
-      <div class="meta">⚽ ${goalscorers || "Sin goles"}</div>
-      <div class="meta">🏅 ${mvpPlayer ? escapeHtml(mvpPlayer.name) : "Sin MVP"}</div>
+      <div class="meta">${goalscorers || "Sin goles"}</div>
+      <div class="meta" style="margin-top:4px">🏅 ${mvpPlayer ? escapeHtml(mvpPlayer.name) : "Sin MVP"}</div>
     `;
     detail.append(stats);
 
@@ -1141,6 +1138,10 @@ function renderHistory() {
       <button class="secondary small delete-match-btn" type="button">Borrar</button>
     `;
     detail.append(btnRow);
+    detail.style.display = "none";
+    // Override display to use grid when shown
+    detail._show = () => { detail.style.display = "grid"; };
+    detail._hide = () => { detail.style.display = "none"; };
     row.append(detail);
 
     // Edit form
@@ -1178,14 +1179,14 @@ function renderHistory() {
     const chevron = summary.querySelector(".chevron");
     summary.addEventListener("click", () => {
       const open = detail.style.display !== "none";
-      detail.style.display = open ? "none" : "block";
+      open ? detail._hide() : detail._show();
       chevron.style.transform = open ? "" : "rotate(180deg)";
       if (open) editForm.style.display = "none";
     });
 
     btnRow.querySelector(".edit-match-btn").addEventListener("click", (e) => {
       e.stopPropagation();
-      detail.style.display = "none";
+      detail._hide();
       editForm.style.display = "grid";
     });
 
