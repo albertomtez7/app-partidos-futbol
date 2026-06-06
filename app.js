@@ -772,6 +772,73 @@ function renderPending() {
     });
     card.append(teamsGrid);
 
+    // Substituir jugador
+    const subBtn = document.createElement("button");
+    subBtn.className = "secondary";
+    subBtn.style.cssText = "width:100%;font-size:13px";
+    subBtn.textContent = "🔄 Sustituir jugador";
+    card.append(subBtn);
+
+    const subForm = document.createElement("div");
+    subForm.style.cssText = "display:none;gap:8px;padding:10px;background:var(--wash);border-radius:var(--radius)";
+    subForm.innerHTML = `
+      <div style="font-size:13px;font-weight:700;color:var(--ink)">Sustituir jugador</div>
+      <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Quitar (jugador actual)
+        <select class="sub-out" style="min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)">
+          ${[...teams.white, ...teams.black].map((p) => `<option value="${p.id}|${p.id === teams.white.find(w=>w.id===p.id)?.id ? "white" : "black"}">${escapeHtml(p.name)} (${p.id === teams.white.find(w=>w.id===p.id)?.id ? "Blanco" : "Negro"})</option>`).join("")}
+        </select>
+      </label>
+      <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Poner (jugador nuevo)
+        <select class="sub-in" style="min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)">
+          ${state.players.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} (${p.level.toFixed(1)})</option>`).join("")}
+        </select>
+      </label>
+      <div style="display:flex;gap:8px">
+        <button class="small sub-confirm-btn" type="button">Confirmar</button>
+        <button class="small secondary sub-cancel-btn" type="button">Cancelar</button>
+      </div>
+    `;
+    card.append(subForm);
+
+    subBtn.onclick = () => { subForm.style.display = subForm.style.display === "none" ? "grid" : "none"; };
+    subForm.querySelector(".sub-cancel-btn").onclick = () => { subForm.style.display = "none"; };
+    subForm.querySelector(".sub-confirm-btn").onclick = async () => {
+      const outVal = subForm.querySelector(".sub-out").value;
+      const inId = subForm.querySelector(".sub-in").value;
+      const [outId, outTeam] = outVal.split("|");
+      const newPlayer = state.players.find((p) => p.id === inId);
+      if (!newPlayer) return;
+      // Check not already in the match
+      const allIds = [...teams.white, ...teams.black].map((p) => p.id);
+      if (allIds.includes(inId) && inId !== outId) { showToast("Ese jugador ya está en el partido"); return; }
+      // Replace in teams
+      const teamArr = outTeam === "white" ? teams.white : teams.black;
+      const idx = teamArr.findIndex((p) => p.id === outId);
+      if (idx === -1) return;
+      teamArr[idx] = { id: newPlayer.id, name: newPlayer.name, level: newPlayer.level };
+      // Update goalkeeper if needed
+      if (goalkeepers[outTeam] === outId) goalkeepers[outTeam] = null;
+      // Save to remote
+      try {
+        await supabaseRequest(`pending_matches?id=eq.${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({
+            white_player_ids: teams.white.map((p) => p.id),
+            black_player_ids: teams.black.map((p) => p.id),
+            goalkeeper_white: goalkeepers.white || null,
+            goalkeeper_black: goalkeepers.black || null,
+          }),
+        });
+        const pmIdx = pendingMatches.findIndex((m) => m.id === id);
+        if (pmIdx !== -1) pendingMatches[pmIdx].teams = teams;
+        renderPending();
+        showToast("Jugador sustituido");
+      } catch (error) {
+        showToast(`Error: ${error.message}`);
+      }
+    };
+
     // WhatsApp share button
     const waBtnPending = document.createElement("button");
     waBtnPending.className = "secondary";
@@ -1016,73 +1083,99 @@ function renderHistory() {
   state.matches.forEach((match) => {
     const row = document.createElement("article");
     row.className = "row";
-    row.style.flexDirection = "column";
-    row.style.alignItems = "stretch";
-    const whiteNames = match.players.filter((p) => p.team === "white").map((p) => p.name).join(", ");
-    const blackNames = match.players.filter((p) => p.team === "black").map((p) => p.name).join(", ");
+    row.style.cssText = "flex-direction:column;align-items:stretch;padding:0;overflow:hidden";
+
+    const whitePlayers = match.players.filter((p) => p.team === "white");
+    const blackPlayers = match.players.filter((p) => p.team === "black");
     const mvpPlayer = match.players.find((p) => p.mvp);
-    const mvpText = mvpPlayer ? `MVP: ${escapeHtml(mvpPlayer.name)}` : "Sin MVP";
-    const goalscorers = match.players.filter((p) => p.goals > 0).map((p) => `${escapeHtml(p.name)} (${p.goals})`).join(", ");
+    const goalscorers = match.players.filter((p) => p.goals > 0)
+      .map((p) => `${escapeHtml(p.name)} (${p.goals})`).join(", ");
+    const winner = match.winner === "white" ? "⬜ Blanco" : match.winner === "black" ? "⬛ Negro" : "Empate";
 
-    row.innerHTML = `
-      <div class="match-summary" style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;cursor:pointer">
-        <div>
-          <strong>Blanco ${match.whiteScore} - ${match.blackScore} Negro</strong>
-          <div class="meta">${formatDate(match.date)}</div>
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0;align-items:center">
-          <span style="font-size:18px;transition:transform .2s" class="chevron">▾</span>
-        </div>
+    // Summary (always visible, clickable)
+    const summary = document.createElement("div");
+    summary.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:12px;cursor:pointer;gap:8px";
+    summary.innerHTML = `
+      <div>
+        <strong style="font-size:15px">⬜ ${match.whiteScore} — ${match.blackScore} ⬛</strong>
+        <div class="meta" style="margin-top:2px">${formatDate(match.date)}</div>
       </div>
-
-      <div class="match-detail" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">
-        <div class="meta" style="margin-bottom:4px">⬜ ${escapeHtml(whiteNames)}</div>
-        <div class="meta" style="margin-bottom:8px">⬛ ${escapeHtml(blackNames)}</div>
-        <div class="meta" style="margin-bottom:4px">⚽ ${goalscorers || "Sin goles"}</div>
-        <div class="meta" style="margin-bottom:10px">🏅 ${mvpText}</div>
-        <div style="display:flex;gap:6px">
-          <button class="secondary small edit-match-btn" type="button">Editar</button>
-          <button class="secondary small delete-match-btn" type="button">Borrar</button>
-        </div>
-      </div>
-
-      <div class="edit-match-form" style="display:none;margin-top:10px;gap:8px">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Goles blanco
-            <input type="number" min="0" class="edit-white-score" value="${match.whiteScore}" style="min-height:36px;padding:0 8px" />
-          </label>
-          <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Goles negro
-            <input type="number" min="0" class="edit-black-score" value="${match.blackScore}" style="min-height:36px;padding:0 8px" />
-          </label>
-        </div>
-        <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">MVP
-          <select class="edit-mvp" style="min-height:36px;padding:0 8px">
-            <option value="">Sin MVP</option>
-            ${match.players.map((p) => `<option value="${p.id}" ${p.mvp ? "selected" : ""}>${escapeHtml(p.name)}</option>`).join("")}
-          </select>
-        </label>
-        <div style="font-size:13px;color:var(--muted);font-weight:700;margin-top:2px">Goles por jugador</div>
-        ${match.players.map((p) => `
-          <div style="display:grid;grid-template-columns:1fr 84px;gap:8px;align-items:center">
-            <span style="font-size:13px">${escapeHtml(p.name)}</span>
-            <input type="number" min="0" class="edit-goals" data-player-id="${p.id}" value="${p.goals || 0}" style="min-height:36px;padding:0 8px" />
-          </div>`).join("")}
-        <div style="display:flex;gap:8px;margin-top:4px">
-          <button class="small save-match-btn" type="button">Guardar cambios</button>
-          <button class="small secondary cancel-match-btn" type="button">Cancelar</button>
-        </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:12px;font-weight:700;color:var(--grass)">${winner === "Empate" ? "Empate" : `Gana ${winner}`}</span>
+        <span class="chevron" style="font-size:16px;transition:transform .2s">▾</span>
       </div>
     `;
+    row.append(summary);
 
-    const summary = row.querySelector(".match-summary");
-    const detail = row.querySelector(".match-detail");
-    const editForm = row.querySelector(".edit-match-form");
-    const chevron = row.querySelector(".chevron");
-    const editBtn = row.querySelector(".edit-match-btn");
-    const deleteBtn = row.querySelector(".delete-match-btn");
-    const saveBtn = row.querySelector(".save-match-btn");
-    const cancelBtn = row.querySelector(".cancel-match-btn");
+    // Detail (hidden by default)
+    const detail = document.createElement("div");
+    detail.style.cssText = "display:none;padding:0 12px 12px";
 
+    // Teams grid
+    const teamsGrid = document.createElement("div");
+    teamsGrid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px";
+    ["white","black"].forEach((color) => {
+      const players = color === "white" ? whitePlayers : blackPlayers;
+      const box = document.createElement("div");
+      box.className = `team ${color === "black" ? "black" : ""}`;
+      box.innerHTML = `<h3 style="font-size:12px;margin-bottom:4px">${color === "white" ? "⬜ Blanco" : "⬛ Negro"}</h3>` +
+        players.map((p) => `<div class="player-chip"><span>${escapeHtml(p.name)}</span><strong style="font-size:11px">${p.goals > 0 ? "⚽".repeat(Math.min(p.goals,3)) + (p.goals > 3 ? p.goals : "") : ""}</strong></div>`).join("");
+      teamsGrid.append(box);
+    });
+    detail.append(teamsGrid);
+
+    // Stats row
+    const stats = document.createElement("div");
+    stats.style.cssText = "display:grid;gap:4px;margin-bottom:10px;padding:8px;background:var(--wash);border-radius:var(--radius)";
+    stats.innerHTML = `
+      <div class="meta">⚽ ${goalscorers || "Sin goles"}</div>
+      <div class="meta">🏅 ${mvpPlayer ? escapeHtml(mvpPlayer.name) : "Sin MVP"}</div>
+    `;
+    detail.append(stats);
+
+    // Edit/delete buttons
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex;gap:8px";
+    btnRow.innerHTML = `
+      <button class="secondary small edit-match-btn" type="button">Editar</button>
+      <button class="secondary small delete-match-btn" type="button">Borrar</button>
+    `;
+    detail.append(btnRow);
+    row.append(detail);
+
+    // Edit form
+    const editForm = document.createElement("div");
+    editForm.style.cssText = "display:none;padding:0 12px 12px;gap:8px";
+    editForm.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Goles blanco
+          <input type="number" min="0" class="edit-white-score" value="${match.whiteScore}" style="min-height:36px;padding:0 8px" />
+        </label>
+        <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Goles negro
+          <input type="number" min="0" class="edit-black-score" value="${match.blackScore}" style="min-height:36px;padding:0 8px" />
+        </label>
+      </div>
+      <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">MVP
+        <select class="edit-mvp" style="min-height:36px;padding:0 8px">
+          <option value="">Sin MVP</option>
+          ${match.players.map((p) => `<option value="${p.id}" ${p.mvp ? "selected" : ""}>${escapeHtml(p.name)}</option>`).join("")}
+        </select>
+      </label>
+      <div style="font-size:13px;color:var(--muted);font-weight:700">Goles por jugador</div>
+      ${match.players.map((p) => `
+        <div style="display:grid;grid-template-columns:1fr 84px;gap:8px;align-items:center">
+          <span style="font-size:13px">${escapeHtml(p.name)}</span>
+          <input type="number" min="0" class="edit-goals" data-player-id="${p.id}" value="${p.goals || 0}" style="min-height:36px;padding:0 8px" />
+        </div>`).join("")}
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="small save-match-btn" type="button">Guardar</button>
+        <button class="small secondary cancel-match-btn" type="button">Cancelar</button>
+      </div>
+    `;
+    row.append(editForm);
+
+    // Events
+    const chevron = summary.querySelector(".chevron");
     summary.addEventListener("click", () => {
       const open = detail.style.display !== "none";
       detail.style.display = open ? "none" : "block";
@@ -1090,19 +1183,15 @@ function renderHistory() {
       if (open) editForm.style.display = "none";
     });
 
-    editBtn.addEventListener("click", () => {
+    btnRow.querySelector(".edit-match-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
       detail.style.display = "none";
       editForm.style.display = "grid";
     });
 
-    cancelBtn.addEventListener("click", () => {
-      editForm.style.display = "none";
-      detail.style.display = "block";
-    });
-
-    deleteBtn.addEventListener("click", async () => {
+    btnRow.querySelector(".delete-match-btn").addEventListener("click", async (e) => {
+      e.stopPropagation();
       if (!confirm("¿Borrar este partido? Los niveles y estadísticas se recalcularán.")) return;
-      deleteBtn.disabled = true;
       try {
         await deleteRemoteMatch(match.id);
         state.matches = state.matches.filter((m) => m.id !== match.id);
@@ -1112,21 +1201,26 @@ function renderHistory() {
         showToast("Partido borrado y niveles recalculados");
       } catch (error) {
         showToast(`Error: ${error.message}`);
-        deleteBtn.disabled = false;
       }
     });
 
-    saveBtn.addEventListener("click", async () => {
-      const newWhiteScore = Math.max(0, Number(row.querySelector(".edit-white-score").value) || 0);
-      const newBlackScore = Math.max(0, Number(row.querySelector(".edit-black-score").value) || 0);
-      const newMvpId = row.querySelector(".edit-mvp").value;
+    editForm.querySelector(".cancel-match-btn").addEventListener("click", () => {
+      editForm.style.display = "none";
+      detail.style.display = "block";
+    });
+
+    editForm.querySelector(".save-match-btn").addEventListener("click", async () => {
+      const newWhiteScore = Math.max(0, Number(editForm.querySelector(".edit-white-score").value) || 0);
+      const newBlackScore = Math.max(0, Number(editForm.querySelector(".edit-black-score").value) || 0);
+      const newMvpId = editForm.querySelector(".edit-mvp").value;
       const newGoals = {};
-      row.querySelectorAll(".edit-goals").forEach((input) => { newGoals[input.dataset.playerId] = Math.max(0, Number(input.value) || 0); });
-      const whiteGoalsTotal = match.players.filter((p) => p.team === "white").reduce((s, p) => s + (newGoals[p.id] || 0), 0);
-      const blackGoalsTotal = match.players.filter((p) => p.team === "black").reduce((s, p) => s + (newGoals[p.id] || 0), 0);
+      editForm.querySelectorAll(".edit-goals").forEach((input) => { newGoals[input.dataset.playerId] = Math.max(0, Number(input.value) || 0); });
+      const whiteGoalsTotal = whitePlayers.reduce((s, p) => s + (newGoals[p.id] || 0), 0);
+      const blackGoalsTotal = blackPlayers.reduce((s, p) => s + (newGoals[p.id] || 0), 0);
       if (whiteGoalsTotal !== newWhiteScore || blackGoalsTotal !== newBlackScore) {
         showToast("Los goles de cada equipo deben coincidir con el marcador"); return;
       }
+      const saveBtn = editForm.querySelector(".save-match-btn");
       saveBtn.disabled = true;
       try {
         match.whiteScore = newWhiteScore; match.blackScore = newBlackScore;
@@ -1136,7 +1230,7 @@ function renderHistory() {
         await updateRemoteMatch(match);
         await Promise.all(state.players.map((p) => updateRemotePlayerAfterMatch({ id: p.id })));
         await syncFromSupabase(false);
-        showToast("Partido actualizado y niveles recalculados");
+        showToast("Partido actualizado");
       } catch (error) {
         showToast(`Error: ${error.message}`); saveBtn.disabled = false;
       }
