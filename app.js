@@ -615,6 +615,8 @@ function calculateRepeatScore(white, black, match) {
 function renderTeams() {
   els.teamsArea.hidden = !currentTeams;
   els.resultForm.hidden = true;
+  const existingActionsDiv = document.getElementById("teamsActionBtns");
+  if (existingActionsDiv) existingActionsDiv.hidden = !currentTeams;
   if (!currentTeams) {
     els.whiteAvg.textContent = "0.0";
     els.blackAvg.textContent = "0.0";
