@@ -656,7 +656,7 @@ function renderTeams() {
   okBtn.textContent = "✅ OK — Guardar partido pendiente";
   okBtn.style.cssText = "grid-column:span 2";
   okBtn.onclick = () => {
-    const title = prompt("Ponle un título a este partido (ej. "Martes tarde"):");
+    const title = prompt('Ponle un título a este partido (ej. Martes tarde, Jueves noche):');
     if (title === null) return; // cancelled
     const pm = {
       id: createId(),
