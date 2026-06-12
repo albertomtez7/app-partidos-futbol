@@ -1228,7 +1228,7 @@ function renderHistory() {
   state.matches.forEach((match) => {
     const row = document.createElement("article");
     row.className = "row";
-    row.style.cssText = "flex-direction:column;align-items:stretch;padding:0;overflow:hidden";
+    row.style.cssText = "display:flex;flex-direction:column;align-items:stretch;padding:0;overflow:hidden;grid-template-columns:none";
 
     const whitePlayers = match.players.filter((p) => p.team === "white");
     const blackPlayers = match.players.filter((p) => p.team === "black");
