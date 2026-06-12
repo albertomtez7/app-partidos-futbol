@@ -23,6 +23,28 @@ let selectedIds = new Set();
 let currentTeams = null;
 let goalkeeperIds = { white: null, black: null };
 let pendingMatches = [];
+let goalkeeperSelectedIds = new Set(); // ids marcados como portero en inscripcion
+
+function saveCurrentTeamsLocal() {
+  if (!currentGroup) return;
+  const key = `currentTeams_${currentGroup.id}`;
+  if (currentTeams) {
+    localStorage.setItem(key, JSON.stringify({ currentTeams, goalkeeperIds }));
+  } else {
+    localStorage.removeItem(key);
+  }
+}
+
+function loadCurrentTeamsLocal() {
+  if (!currentGroup) return;
+  const key = `currentTeams_${currentGroup.id}`;
+  const saved = localStorage.getItem(key);
+  if (saved) {
+    const parsed = JSON.parse(saved);
+    currentTeams = parsed.currentTeams;
+    goalkeeperIds = parsed.goalkeeperIds || { white: null, black: null };
+  }
+}
 
 const els = {
   groupSelector:   document.querySelector("#groupSelector"),
@@ -139,10 +161,29 @@ els.makeTeamsBtn.addEventListener("click", async () => {
   }
 
   const generatedTeams = makeBalancedTeams(players);
+  // Assign goalkeepers from selection
+  const gkList = [...goalkeeperSelectedIds].filter(id => players.some(p => p.id === id));
+  const newGkIds = { white: null, black: null };
+  if (gkList.length === 2) {
+    // Assign one to each team
+    const inWhite = generatedTeams.white.find(p => p.id === gkList[0]);
+    newGkIds.white = inWhite ? gkList[0] : (generatedTeams.white.find(p => p.id === gkList[1]) ? gkList[1] : null);
+    newGkIds.black = newGkIds.white === gkList[0] ? gkList[1] : gkList[0];
+    // Validate one per team
+    const wInBlack = generatedTeams.black.find(p => p.id === newGkIds.white);
+    if (wInBlack) { newGkIds.black = newGkIds.white; newGkIds.white = null; }
+  } else if (gkList.length === 1) {
+    // Assign randomly to one team
+    const inWhite = generatedTeams.white.find(p => p.id === gkList[0]);
+    const inBlack = generatedTeams.black.find(p => p.id === gkList[0]);
+    if (inWhite) newGkIds.white = gkList[0];
+    else if (inBlack) newGkIds.black = gkList[0];
+  }
   try {
     await createRemoteTeamDraft(generatedTeams);
     currentTeams = generatedTeams;
-    goalkeeperIds = { white: null, black: null };
+    goalkeeperIds = newGkIds;
+    saveCurrentTeamsLocal();
     renderTeams();
     showToast("Equipos generados");
   } catch (error) {
@@ -156,6 +197,7 @@ els.clearSignupBtn.addEventListener("click", () => {
   selectedIds.clear();
   currentTeams = null;
   goalkeeperIds = { white: null, black: null };
+  saveCurrentTeamsLocal();
   renderAll();
 });
 
@@ -306,6 +348,8 @@ async function createRemoteMatch(match) {
       black_score: match.blackScore,
       winner: match.winner,
       group_id: currentGroup.id,
+      white_avg: match.whiteAvg,
+      black_avg: match.blackAvg,
     }),
   });
   const matchPlayers = match.players.map((player) => ({
@@ -340,7 +384,7 @@ async function updateRemoteMatch(match) {
   await supabaseRequest(`matches?id=eq.${encodeURIComponent(match.id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ white_score: match.whiteScore, black_score: match.blackScore, winner: match.winner }),
+    body: JSON.stringify({ white_score: match.whiteScore, black_score: match.blackScore, winner: match.winner, white_avg: match.whiteAvg, black_avg: match.blackAvg }),
   });
   await supabaseRequest(`match_players?match_id=eq.${encodeURIComponent(match.id)}`, {
     method: "DELETE", headers: { Prefer: "return=minimal" },
@@ -390,6 +434,8 @@ function mapRemoteMatches(matches, matchPlayers) {
     return {
       id: match.id, date: match.created_at, whiteScore: match.white_score,
       blackScore: match.black_score, winner: match.winner,
+      whiteAvg: match.white_avg !== null ? Number(match.white_avg) : null,
+      blackAvg: match.black_avg !== null ? Number(match.black_avg) : null,
       whiteIds: players.filter((p) => p.team === "white").map((p) => p.id),
       blackIds: players.filter((p) => p.team === "black").map((p) => p.id),
       players,
@@ -405,8 +451,13 @@ function recalculateAllPlayersFromHistory() {
   const sorted = [...state.matches].sort((a, b) => new Date(a.date) - new Date(b.date));
   sorted.forEach((match) => {
     const whiteIds = new Set(match.players.filter((p) => p.team === "white").map((p) => p.id));
-    const whiteAvg = avgLevelById([...whiteIds]);
-    const blackAvg = avgLevelById([...match.players.filter((p) => p.team === "black").map((p) => p.id)]);
+    // Use stored avgs if available, otherwise recalculate from current levels
+    const whiteAvg = match.whiteAvg !== null && match.whiteAvg !== undefined
+      ? match.whiteAvg
+      : avgLevelById([...whiteIds]);
+    const blackAvg = match.blackAvg !== null && match.blackAvg !== undefined
+      ? match.blackAvg
+      : avgLevelById([...match.players.filter((p) => p.team === "black").map((p) => p.id)]);
     match.players.forEach((mp) => {
       const stored = state.players.find((p) => p.id === mp.id);
       if (!stored) return;
@@ -460,7 +511,7 @@ function renderPlayers() {
     els.playersList.append(emptyRow("Añade jugadores para empezar."));
     return;
   }
-  [...state.players].sort((a, b) => b.level - a.level).forEach((player) => {
+  [...state.players].sort((a, b) => a.name.localeCompare(b.name, "es")).forEach((player) => {
     const row = document.createElement("article");
     row.className = "row";
     row.innerHTML = `
@@ -532,26 +583,57 @@ function renderSignup() {
   const minPlayers = currentGroup.teamSize * 2;
   els.selectedCount.textContent = `${selectedIds.size} (mín. ${minPlayers})`;
   els.signupList.innerHTML = "";
+  // Sticky counter banner
+  const stickyCounter = document.createElement("div");
+  stickyCounter.style.cssText = "position:sticky;top:60px;z-index:2;background:var(--grass);color:white;padding:6px 12px;border-radius:var(--radius);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:14px";
+  const gkCount = [...goalkeeperSelectedIds].filter(id => selectedIds.has(id)).length;
+  stickyCounter.innerHTML = `<span>✅ ${selectedIds.size} jugadores</span><span>🧤 ${gkCount} portero${gkCount !== 1 ? "s" : ""}</span>`;
+  els.signupList.append(stickyCounter);
   if (!state.players.length) {
     els.signupList.append(emptyRow("No hay jugadores disponibles."));
     return;
   }
   [...state.players].sort((a, b) => a.name.localeCompare(b.name, "es")).forEach((player) => {
-    const row = document.createElement("label");
+    const isSelected = selectedIds.has(player.id);
+    const isGk = goalkeeperSelectedIds.has(player.id);
+    const row = document.createElement("div");
     row.className = "row";
+    row.style.cssText = "display:flex;align-items:center;gap:10px";
     row.innerHTML = `
-      <div>
+      <div style="flex:1;min-width:0">
         <strong>${escapeHtml(player.name)}</strong>
         <div class="meta">Nivel ${player.level.toFixed(1)}</div>
       </div>
-      <input class="check" type="checkbox" ${selectedIds.has(player.id) ? "checked" : ""} />
+      <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);cursor:pointer;flex-shrink:0">
+        <input class="gk-check" type="checkbox" ${isGk ? "checked" : ""} ${!isSelected ? "disabled" : ""} style="width:16px;height:16px;accent-color:var(--grass)" />
+        🧤
+      </label>
+      <input class="player-check" type="checkbox" ${isSelected ? "checked" : ""} style="width:24px;height:24px;accent-color:var(--grass);flex-shrink:0" />
     `;
-    row.querySelector("input").addEventListener("change", (event) => {
-      // No cap — allow any even number above minimum
-      event.target.checked ? selectedIds.add(player.id) : selectedIds.delete(player.id);
+    const playerCheck = row.querySelector(".player-check");
+    const gkCheck = row.querySelector(".gk-check");
+    playerCheck.addEventListener("change", () => {
+      if (playerCheck.checked) {
+        selectedIds.add(player.id);
+      } else {
+        selectedIds.delete(player.id);
+        goalkeeperSelectedIds.delete(player.id);
+      }
       currentTeams = null;
       renderSignup();
       renderTeams();
+    });
+    gkCheck.addEventListener("change", () => {
+      if (gkCheck.checked) {
+        if (goalkeeperSelectedIds.size >= 2) {
+          gkCheck.checked = false;
+          showToast("Solo puede haber 2 porteros");
+          return;
+        }
+        goalkeeperSelectedIds.add(player.id);
+      } else {
+        goalkeeperSelectedIds.delete(player.id);
+      }
     });
     els.signupList.append(row);
   });
@@ -646,6 +728,7 @@ function renderTeams() {
       await createRemoteTeamDraft(generatedTeams);
       currentTeams = generatedTeams;
       goalkeeperIds = { white: null, black: null };
+      saveCurrentTeamsLocal();
       renderTeams();
     } catch (error) {
       showToast(`Error: ${error.message}`);
@@ -769,25 +852,57 @@ function renderPending() {
     });
     card.append(teamsGrid);
 
-    // Substituir jugador
+    // Helper to save pending match teams
+    const savePendingTeams = async () => {
+      await supabaseRequest(`pending_matches?id=eq.${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          white_player_ids: teams.white.map((p) => p.id),
+          black_player_ids: teams.black.map((p) => p.id),
+          goalkeeper_white: goalkeepers.white || null,
+          goalkeeper_black: goalkeepers.black || null,
+        }),
+      });
+      const pmIdx = pendingMatches.findIndex((m) => m.id === id);
+      if (pmIdx !== -1) pendingMatches[pmIdx].teams = JSON.parse(JSON.stringify(teams));
+    };
+
+    // Action buttons row
+    const actionBtnsRow = document.createElement("div");
+    actionBtnsRow.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
+
     const subBtn = document.createElement("button");
     subBtn.className = "secondary";
-    subBtn.style.cssText = "width:100%;font-size:13px";
-    subBtn.textContent = "🔄 Sustituir jugador";
-    card.append(subBtn);
+    subBtn.style.cssText = "font-size:13px";
+    subBtn.textContent = "🔄 Sustituir";
 
+    const swapBtn = document.createElement("button");
+    swapBtn.className = "secondary";
+    swapBtn.style.cssText = "font-size:13px";
+    swapBtn.textContent = "↔️ Cambiar";
+
+    actionBtnsRow.append(subBtn, swapBtn);
+    card.append(actionBtnsRow);
+
+    // SUSTITUIR form (player outside → player inside)
+    const allMatchIds = new Set([...teams.white, ...teams.black].map((p) => p.id));
+    const outsidePlayers = state.players.filter((p) => !allMatchIds.has(p.id));
     const subForm = document.createElement("div");
     subForm.style.cssText = "display:none;gap:8px;padding:10px;background:var(--wash);border-radius:var(--radius)";
     subForm.innerHTML = `
-      <div style="font-size:13px;font-weight:700;color:var(--ink)">Sustituir jugador</div>
-      <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Quitar (jugador actual)
+      <div style="font-size:13px;font-weight:700;color:var(--ink)">Sustituir — entra alguien de fuera</div>
+      <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Sale del partido
         <select class="sub-out" style="min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)">
-          ${[...teams.white, ...teams.black].map((p) => `<option value="${p.id}|${p.id === teams.white.find(w=>w.id===p.id)?.id ? "white" : "black"}">${escapeHtml(p.name)} (${p.id === teams.white.find(w=>w.id===p.id)?.id ? "Blanco" : "Negro"})</option>`).join("")}
+          ${[...teams.white, ...teams.black].map((p) => {
+            const t = teams.white.find(w => w.id === p.id) ? "white" : "black";
+            return `<option value="${p.id}|${t}">${escapeHtml(p.name)} (${t === "white" ? "Blanco" : "Negro"})</option>`;
+          }).join("")}
         </select>
       </label>
-      <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Poner (jugador nuevo)
+      <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Entra (de fuera del partido)
         <select class="sub-in" style="min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)">
-          ${state.players.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} (${p.level.toFixed(1)})</option>`).join("")}
+          ${outsidePlayers.length ? outsidePlayers.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} (${p.level.toFixed(1)})</option>`).join("") : '<option value="">No hay jugadores fuera</option>'}
         </select>
       </label>
       <div style="display:flex;gap:8px">
@@ -797,43 +912,62 @@ function renderPending() {
     `;
     card.append(subForm);
 
-    subBtn.onclick = () => { subForm.style.display = subForm.style.display === "none" ? "grid" : "none"; };
+    subBtn.onclick = () => { subForm.style.display = subForm.style.display === "none" ? "grid" : "none"; swapForm.style.display = "none"; };
     subForm.querySelector(".sub-cancel-btn").onclick = () => { subForm.style.display = "none"; };
     subForm.querySelector(".sub-confirm-btn").onclick = async () => {
+      if (!outsidePlayers.length) return;
       const outVal = subForm.querySelector(".sub-out").value;
       const inId = subForm.querySelector(".sub-in").value;
       const [outId, outTeam] = outVal.split("|");
       const newPlayer = state.players.find((p) => p.id === inId);
       if (!newPlayer) return;
-      // Check not already in the match
-      const allIds = [...teams.white, ...teams.black].map((p) => p.id);
-      if (allIds.includes(inId) && inId !== outId) { showToast("Ese jugador ya está en el partido"); return; }
-      // Replace in teams
       const teamArr = outTeam === "white" ? teams.white : teams.black;
       const idx = teamArr.findIndex((p) => p.id === outId);
       if (idx === -1) return;
       teamArr[idx] = { id: newPlayer.id, name: newPlayer.name, level: newPlayer.level };
-      // Update goalkeeper if needed
       if (goalkeepers[outTeam] === outId) goalkeepers[outTeam] = null;
-      // Save to remote
-      try {
-        await supabaseRequest(`pending_matches?id=eq.${encodeURIComponent(id)}`, {
-          method: "PATCH",
-          headers: { Prefer: "return=minimal" },
-          body: JSON.stringify({
-            white_player_ids: teams.white.map((p) => p.id),
-            black_player_ids: teams.black.map((p) => p.id),
-            goalkeeper_white: goalkeepers.white || null,
-            goalkeeper_black: goalkeepers.black || null,
-          }),
-        });
-        const pmIdx = pendingMatches.findIndex((m) => m.id === id);
-        if (pmIdx !== -1) pendingMatches[pmIdx].teams = teams;
-        renderPending();
-        showToast("Jugador sustituido");
-      } catch (error) {
-        showToast(`Error: ${error.message}`);
-      }
+      try { await savePendingTeams(); renderPending(); showToast("Jugador sustituido"); }
+      catch (error) { showToast(`Error: ${error.message}`); }
+    };
+
+    // CAMBIAR form (swap between teams)
+    const swapForm = document.createElement("div");
+    swapForm.style.cssText = "display:none;gap:8px;padding:10px;background:var(--wash);border-radius:var(--radius)";
+    swapForm.innerHTML = `
+      <div style="font-size:13px;font-weight:700;color:var(--ink)">Cambiar — intercambio entre equipos</div>
+      <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Jugador del equipo blanco
+        <select class="swap-white" style="min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)">
+          ${teams.white.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}
+        </select>
+      </label>
+      <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Jugador del equipo negro
+        <select class="swap-black" style="min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)">
+          ${teams.black.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}
+        </select>
+      </label>
+      <div style="display:flex;gap:8px">
+        <button class="small swap-confirm-btn" type="button">Confirmar</button>
+        <button class="small secondary swap-cancel-btn" type="button">Cancelar</button>
+      </div>
+    `;
+    card.append(swapForm);
+
+    swapBtn.onclick = () => { swapForm.style.display = swapForm.style.display === "none" ? "grid" : "none"; subForm.style.display = "none"; };
+    swapForm.querySelector(".swap-cancel-btn").onclick = () => { swapForm.style.display = "none"; };
+    swapForm.querySelector(".swap-confirm-btn").onclick = async () => {
+      const whiteId = swapForm.querySelector(".swap-white").value;
+      const blackId = swapForm.querySelector(".swap-black").value;
+      const wi = teams.white.findIndex((p) => p.id === whiteId);
+      const bi = teams.black.findIndex((p) => p.id === blackId);
+      if (wi === -1 || bi === -1) return;
+      [teams.white[wi], teams.black[bi]] = [teams.black[bi], teams.white[wi]];
+      // Fix goalkeepers
+      if (goalkeepers.white === whiteId) goalkeepers.white = blackId;
+      else if (goalkeepers.white === blackId) goalkeepers.white = whiteId;
+      if (goalkeepers.black === blackId) goalkeepers.black = whiteId;
+      else if (goalkeepers.black === whiteId) goalkeepers.black = blackId;
+      try { await savePendingTeams(); renderPending(); showToast("Jugadores intercambiados"); }
+      catch (error) { showToast(`Error: ${error.message}`); }
     };
 
     // WhatsApp share button
@@ -1018,6 +1152,7 @@ function saveMatch(whiteScore, blackScore, goalsByPlayer, mvpId) {
   const winner = whiteScore === blackScore ? "draw" : whiteScore > blackScore ? "white" : "black";
   const whiteAvg = avgLevel(currentTeams.white);
   const blackAvg = avgLevel(currentTeams.black);
+  // Store avgs on the match for accurate recalculation later
   const whiteGkId = goalkeeperIds.white;
   const blackGkId = goalkeeperIds.black;
   const whiteGkBonus = whiteGkId !== null && blackScore < 2;
@@ -1040,7 +1175,7 @@ function saveMatch(whiteScore, blackScore, goalsByPlayer, mvpId) {
     else stored.stats.losses += 1;
     return { id: player.id, name: player.name, team, levelBefore: player.level, levelAfter: stored.level, goals, mvp: player.id === mvpId, goalkeeper: isGoalkeeper, goalkeeperBonus, delta, rivalTeamAvg };
   });
-  const match = { id: createId(), date: new Date().toISOString(), whiteScore, blackScore, winner, whiteIds, blackIds, players: playerSnapshots };
+  const match = { id: createId(), date: new Date().toISOString(), whiteScore, blackScore, winner, whiteAvg, blackAvg, whiteIds, blackIds, players: playerSnapshots };
   state.matches.unshift(match);
   return match;
 }
@@ -1225,6 +1360,7 @@ function renderHistory() {
         match.whiteScore = newWhiteScore; match.blackScore = newBlackScore;
         match.winner = newWhiteScore === newBlackScore ? "draw" : newWhiteScore > newBlackScore ? "white" : "black";
         match.players.forEach((p) => { p.goals = newGoals[p.id] || 0; p.mvp = p.id === newMvpId; });
+        // Keep existing stored avgs (don't recalculate them on edit)
         recalculateAllPlayersFromHistory();
         await updateRemoteMatch(match);
         await Promise.all(state.players.map((p) => updateRemotePlayerAfterMatch({ id: p.id })));
