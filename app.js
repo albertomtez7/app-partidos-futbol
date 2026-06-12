@@ -272,6 +272,8 @@ async function syncFromSupabase(showMessage = true) {
     selectedIds = new Set([...selectedIds].filter((id) => state.players.some((p) => p.id === id)));
     currentTeams = null;
     await loadPendingMatchesRemote();
+    // Restore teams if they were generated before leaving the app
+    loadCurrentTeamsLocal();
     saveAndRender(showMessage ? "Datos actualizados desde Supabase" : "");
   } catch (error) {
     showToast(`No se pudo cargar Supabase: ${error.message}`);
