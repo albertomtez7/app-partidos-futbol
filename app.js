@@ -511,7 +511,11 @@ function renderPlayers() {
     els.playersList.append(emptyRow("Añade jugadores para empezar."));
     return;
   }
-  [...state.players].sort((a, b) => a.name.localeCompare(b.name, "es")).forEach((player) => {
+  [...state.players].sort((a, b) => {
+    if (b.level !== a.level) return b.level - a.level;
+    if (b.stats.played !== a.stats.played) return b.stats.played - a.stats.played;
+    return a.name.localeCompare(b.name, "es");
+  }).forEach((player) => {
     const row = document.createElement("article");
     row.className = "row";
     row.innerHTML = `
@@ -593,7 +597,11 @@ function renderSignup() {
     els.signupList.append(emptyRow("No hay jugadores disponibles."));
     return;
   }
-  [...state.players].sort((a, b) => a.name.localeCompare(b.name, "es")).forEach((player) => {
+  [...state.players].sort((a, b) => {
+    if (b.level !== a.level) return b.level - a.level;
+    if (b.stats.played !== a.stats.played) return b.stats.played - a.stats.played;
+    return a.name.localeCompare(b.name, "es");
+  }).forEach((player) => {
     const isSelected = selectedIds.has(player.id);
     const isGk = goalkeeperSelectedIds.has(player.id);
     const row = document.createElement("div");
@@ -1194,7 +1202,11 @@ function calculateRatingDelta({ team, winner, goals, isMvp, isGoalkeeper, goalke
 function renderRanking() {
   els.rankingList.innerHTML = "";
   if (!state.players.length) { els.rankingList.append(emptyRow("El ranking aparecerá aqui.")); return; }
-  [...state.players].sort((a, b) => b.level - a.level).forEach((player, index) => {
+  [...state.players].sort((a, b) => {
+    if (b.level !== a.level) return b.level - a.level;
+    if (b.stats.played !== a.stats.played) return b.stats.played - a.stats.played;
+    return a.name.localeCompare(b.name, "es");
+  }).forEach((player, index) => {
     const row = document.createElement("article");
     row.className = "row";
     row.innerHTML = `
