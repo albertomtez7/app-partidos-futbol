@@ -1228,7 +1228,7 @@ function renderHistory() {
   state.matches.forEach((match) => {
     const row = document.createElement("article");
     row.className = "match-row";
-    row.style.cssText = "";
+    row.style.cssText = "display:flex;flex-direction:column;align-items:stretch;padding:0;overflow:hidden;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)";
 
     const whitePlayers = match.players.filter((p) => p.team === "white");
     const blackPlayers = match.players.filter((p) => p.team === "black");
@@ -1252,7 +1252,6 @@ function renderHistory() {
 
     // Detail (hidden by default)
     const detail = document.createElement("div");
-    detail.style.cssText = "display:none;padding:12px;gap:10px;flex-direction:column";
 
     // Teams grid full width
     const teamsGrid = document.createElement("div");
@@ -1284,9 +1283,8 @@ function renderHistory() {
       <button class="secondary small delete-match-btn" type="button">Borrar</button>
     `;
     detail.append(btnRow);
-    detail.style.display = "none";
-    // Override display to use grid when shown
-    detail._show = () => { detail.style.display = "flex"; detail.style.flexDirection = "column"; };
+    detail.style.cssText = "display:none;flex-direction:column;padding:12px;gap:10px";
+    detail._show = () => { detail.style.display = "flex"; };
     detail._hide = () => { detail.style.display = "none"; };
     row.append(detail);
 
@@ -1353,7 +1351,7 @@ function renderHistory() {
 
     editForm.querySelector(".cancel-match-btn").addEventListener("click", () => {
       editForm.style.display = "none";
-      detail.style.display = "block";
+      detail._show();
     });
 
     editForm.querySelector(".save-match-btn").addEventListener("click", async () => {
