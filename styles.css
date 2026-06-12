@@ -275,6 +275,17 @@ select {
   background: var(--surface);
 }
 
+.match-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
 .row-title {
   display: flex;
   align-items: center;
