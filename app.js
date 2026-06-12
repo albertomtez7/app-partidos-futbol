@@ -323,7 +323,7 @@ async function updateRemotePlayerManual(player) {
   await supabaseRequest(`players?id=eq.${encodeURIComponent(player.id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ name: player.name, level: player.level }),
+    body: JSON.stringify({ name: player.name, level: player.level, initial_level: player.level }),
   });
 }
 
@@ -553,7 +553,7 @@ function renderPlayers() {
       if (!newName) return;
       saveBtn.disabled = true;
       try {
-        player.name = newName; player.level = newLevel;
+        player.name = newName; player.level = newLevel; player.initialLevel = newLevel;
         await updateRemotePlayerManual(player);
         renderPlayers();
         showToast("Jugador actualizado");
