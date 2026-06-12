@@ -642,6 +642,7 @@ function renderSignup() {
       } else {
         goalkeeperSelectedIds.delete(player.id);
       }
+      renderSignup();
     });
     els.signupList.append(row);
   });
