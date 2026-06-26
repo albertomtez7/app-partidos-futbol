@@ -848,19 +848,52 @@ function renderPending() {
     header.innerHTML = `<strong style="font-size:16px">${escapeHtml(title)}</strong><div class="meta">${formatDate(createdAt)}</div>`;
     card.append(header);
 
-    // Teams display
+    // Teams display with delete buttons
     const teamsGrid = document.createElement("div");
     teamsGrid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
-    ["white", "black"].forEach((color) => {
-      const box = document.createElement("div");
-      box.className = `team ${color === "black" ? "black" : ""}`;
-      box.innerHTML = `<h3>${color === "white" ? "⬜ Blanco" : "⬛ Negro"}</h3>` +
-        teams[color].map((p) => {
+    const minTeamSize = currentGroup.teamSize;
+
+    const renderTeamsGrid = () => {
+      teamsGrid.innerHTML = "";
+      ["white", "black"].forEach((color) => {
+        const box = document.createElement("div");
+        box.className = `team ${color === "black" ? "black" : ""}`;
+        const title = document.createElement("h3");
+        title.textContent = color === "white" ? "⬜ Blanco" : "⬛ Negro";
+        box.append(title);
+        teams[color].forEach((p) => {
           const isGk = goalkeepers[color] === p.id;
-          return `<div class="player-chip"><span>${escapeHtml(p.name)}${isGk ? " 🧤" : ""}</span><strong style="font-size:12px">${p.level.toFixed(1)}</strong></div>`;
-        }).join("");
-      teamsGrid.append(box);
-    });
+          const chip = document.createElement("div");
+          chip.className = "player-chip";
+          chip.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:4px";
+          chip.innerHTML = `
+            <span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${escapeHtml(p.name)}${isGk ? " 🧤" : ""}</span>
+            <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+              <strong style="font-size:11px">${p.level.toFixed(1)}</strong>
+              <button type="button" style="min-height:24px;padding:0 6px;font-size:11px;background:#e7ece9;color:var(--ink);border-radius:4px" class="del-player-btn" data-id="${p.id}" data-team="${color}" title="Eliminar">✕</button>
+            </div>
+          `;
+          box.append(chip);
+        });
+        teamsGrid.append(box);
+      });
+      // Bind delete buttons
+      teamsGrid.querySelectorAll(".del-player-btn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const pId = btn.dataset.id;
+          const pTeam = btn.dataset.team;
+          if (teams[pTeam].length <= minTeamSize) {
+            showToast(`Mínimo ${minTeamSize} jugadores por equipo`);
+            return;
+          }
+          teams[pTeam] = teams[pTeam].filter((p) => p.id !== pId);
+          if (goalkeepers[pTeam] === pId) goalkeepers[pTeam] = null;
+          try { await savePendingTeams(); renderTeamsGrid(); showToast("Jugador eliminado"); }
+          catch (e) { showToast(`Error: ${e.message}`); }
+        });
+      });
+    };
+    renderTeamsGrid();
     card.append(teamsGrid);
 
     // Helper to save pending match teams
@@ -879,21 +912,26 @@ function renderPending() {
       if (pmIdx !== -1) pendingMatches[pmIdx].teams = JSON.parse(JSON.stringify(teams));
     };
 
-    // Action buttons row
+    // Action buttons row — 3 buttons
     const actionBtnsRow = document.createElement("div");
-    actionBtnsRow.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px";
+    actionBtnsRow.style.cssText = "display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px";
 
     const subBtn = document.createElement("button");
     subBtn.className = "secondary";
-    subBtn.style.cssText = "font-size:13px";
+    subBtn.style.cssText = "font-size:12px;padding:0 6px";
     subBtn.textContent = "🔄 Sustituir";
 
     const swapBtn = document.createElement("button");
     swapBtn.className = "secondary";
-    swapBtn.style.cssText = "font-size:13px";
+    swapBtn.style.cssText = "font-size:12px;padding:0 6px";
     swapBtn.textContent = "↔️ Cambiar";
 
-    actionBtnsRow.append(subBtn, swapBtn);
+    const addBtn = document.createElement("button");
+    addBtn.className = "secondary";
+    addBtn.style.cssText = "font-size:12px;padding:0 6px";
+    addBtn.textContent = "➕ Añadir";
+
+    actionBtnsRow.append(subBtn, swapBtn, addBtn);
     card.append(actionBtnsRow);
 
     // SUSTITUIR form (player outside → player inside)
@@ -923,7 +961,7 @@ function renderPending() {
     `;
     card.append(subForm);
 
-    subBtn.onclick = () => { subForm.style.display = subForm.style.display === "none" ? "grid" : "none"; swapForm.style.display = "none"; };
+    subBtn.onclick = () => { subForm.style.display = subForm.style.display === "none" ? "grid" : "none"; swapForm.style.display = "none"; addForm.style.display = "none"; };
     subForm.querySelector(".sub-cancel-btn").onclick = () => { subForm.style.display = "none"; };
     subForm.querySelector(".sub-confirm-btn").onclick = async () => {
       if (!outsidePlayers.length) return;
@@ -963,7 +1001,58 @@ function renderPending() {
     `;
     card.append(swapForm);
 
-    swapBtn.onclick = () => { swapForm.style.display = swapForm.style.display === "none" ? "grid" : "none"; subForm.style.display = "none"; };
+    // AÑADIR form (add player from outside to a team)
+    const addForm = document.createElement("div");
+    addForm.style.cssText = "display:none;gap:8px;padding:10px;background:var(--wash);border-radius:var(--radius)";
+
+    const buildAddForm = () => {
+      const allMatchIds = new Set([...teams.white, ...teams.black].map((p) => p.id));
+      const available = state.players.filter((p) => !allMatchIds.has(p.id));
+      addForm.innerHTML = `
+        <div style="font-size:13px;font-weight:700;color:var(--ink)">Añadir jugador al partido</div>
+        <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Jugador a añadir
+          <select class="add-player" style="min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)">
+            ${available.length ? available.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} (${p.level.toFixed(1)})</option>`).join("") : '<option value="">No hay jugadores disponibles</option>'}
+          </select>
+        </label>
+        <label style="font-size:13px;color:var(--muted);font-weight:700;display:grid;gap:4px">Equipo
+          <select class="add-team" style="min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)">
+            <option value="white">⬜ Blanco</option>
+            <option value="black">⬛ Negro</option>
+          </select>
+        </label>
+        <div style="display:flex;gap:8px">
+          <button class="small add-confirm-btn" type="button">Añadir</button>
+          <button class="small secondary add-cancel-btn" type="button">Cancelar</button>
+        </div>
+      `;
+      addForm.querySelector(".add-cancel-btn").onclick = () => { addForm.style.display = "none"; };
+      addForm.querySelector(".add-confirm-btn").onclick = async () => {
+        if (!available.length) return;
+        const playerId = addForm.querySelector(".add-player").value;
+        const teamColor = addForm.querySelector(".add-team").value;
+        const newPlayer = state.players.find((p) => p.id === playerId);
+        if (!newPlayer) return;
+        teams[teamColor].push({ id: newPlayer.id, name: newPlayer.name, level: newPlayer.level });
+        try {
+          await savePendingTeams();
+          addForm.style.display = "none";
+          renderTeamsGrid();
+          showToast("Jugador añadido");
+        } catch (e) { showToast(`Error: ${e.message}`); }
+      };
+    };
+    card.append(addForm);
+
+    addBtn.onclick = () => {
+      const open = addForm.style.display !== "none";
+      addForm.style.display = open ? "none" : "grid";
+      subForm.style.display = "none";
+      swapForm.style.display = "none";
+      if (!open) buildAddForm();
+    };
+
+    swapBtn.onclick = () => { swapForm.style.display = swapForm.style.display === "none" ? "grid" : "none"; subForm.style.display = "none"; addForm.style.display = "none"; };
     swapForm.querySelector(".swap-cancel-btn").onclick = () => { swapForm.style.display = "none"; };
     swapForm.querySelector(".swap-confirm-btn").onclick = async () => {
       const whiteId = swapForm.querySelector(".swap-white").value;
