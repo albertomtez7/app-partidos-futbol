@@ -597,11 +597,7 @@ function renderSignup() {
     els.signupList.append(emptyRow("No hay jugadores disponibles."));
     return;
   }
-  [...state.players].sort((a, b) => {
-    if (b.level !== a.level) return b.level - a.level;
-    if (b.stats.played !== a.stats.played) return b.stats.played - a.stats.played;
-    return a.name.localeCompare(b.name, "es");
-  }).forEach((player) => {
+  [...state.players].sort((a, b) => a.name.localeCompare(b.name, "es")).forEach((player) => {
     const isSelected = selectedIds.has(player.id);
     const isGk = goalkeeperSelectedIds.has(player.id);
     const row = document.createElement("div");
