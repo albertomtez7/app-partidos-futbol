@@ -197,6 +197,7 @@ els.clearSignupBtn.addEventListener("click", () => {
   selectedIds.clear();
   currentTeams = null;
   goalkeeperIds = { white: null, black: null };
+  goalkeeperSelectedIds.clear();
   saveCurrentTeamsLocal();
   renderAll();
 });
@@ -272,8 +273,9 @@ async function syncFromSupabase(showMessage = true) {
     selectedIds = new Set([...selectedIds].filter((id) => state.players.some((p) => p.id === id)));
     currentTeams = null;
     await loadPendingMatchesRemote();
-    // Restore teams if they were generated before leaving the app
-    loadCurrentTeamsLocal();
+    // Restore teams only if match tab is active
+    const matchTabActive = document.querySelector('[data-tab="match"]')?.classList.contains("active");
+    if (matchTabActive) loadCurrentTeamsLocal();
     saveAndRender(showMessage ? "Datos actualizados desde Supabase" : "");
   } catch (error) {
     showToast(`No se pudo cargar Supabase: ${error.message}`);
@@ -513,11 +515,7 @@ function renderPlayers() {
     els.playersList.append(emptyRow("Añade jugadores para empezar."));
     return;
   }
-  [...state.players].sort((a, b) => {
-    if (b.level !== a.level) return b.level - a.level;
-    if (b.stats.played !== a.stats.played) return b.stats.played - a.stats.played;
-    return a.name.localeCompare(b.name, "es");
-  }).forEach((player) => {
+  [...state.players].sort((a, b) => a.name.localeCompare(b.name, "es")).forEach((player) => {
     const row = document.createElement("article");
     row.className = "row";
     row.innerHTML = `
