@@ -11,8 +11,7 @@ const SUPABASE_KEY = "sb_publishable_vhH6ilTt_-KHGC8TKrwqnQ_pYhC-ntf";
 const SUPABASE_REST_URL = `${SUPABASE_URL}/rest/v1`;
 
 const GROUPS = {
-  tejares:     { id: "tejares",     name: "Tejares",     teamSize: 5,  password: "gamodebengala2025" },
-  constantina: { id: "constantina", name: "Constantina", teamSize: 7,  password: "lospinos2026" },
+  tejares: { id: "tejares", name: "Tejares", teamSize: 5, password: "gamodebengala2025" },
 };
 
 let currentGroup = null;
@@ -83,7 +82,6 @@ const els = {
 
 // ── Group selector ──────────────────────────────────────────────
 document.querySelector("#btnTejares").addEventListener("click", () => askPassword("tejares"));
-document.querySelector("#btnConstantina").addEventListener("click", () => askPassword("constantina"));
 
 function askPassword(groupId) {
   const group = GROUPS[groupId];
@@ -491,7 +489,7 @@ function recalculateAllPlayersFromHistory() {
       const playerTeamAvg = team === "white" ? whiteAvg : blackAvg;
       const delta = calculateRatingDelta({
         team, winner: match.winner, goals: mp.goals, isMvp: mp.mvp,
-        isGoalkeeper: mp.goalkeeper || false, goalkeeperBonus: mp.goalkeeperBonus || false,
+        isGoalkeeper: mp.goalkeeper || false, goalkeeperBonus: Number(mp.goalkeeperBonus) || 0,
         playerTeamAvg, rivalTeamAvg,
       });
       mp.levelBefore = stored.level;
@@ -1270,15 +1268,22 @@ function saveMatch(whiteScore, blackScore, goalsByPlayer, mvpId) {
   // Store avgs on the match for accurate recalculation later
   const whiteGkId = goalkeeperIds.white;
   const blackGkId = goalkeeperIds.black;
-  const whiteGkBonus = whiteGkId !== null && blackScore < 2;
-  const blackGkBonus = blackGkId !== null && whiteScore < 2;
+  // Goalkeeper bonus: based on goals conceded (rival score)
+  const gkBonusLevel = (conceded) => {
+    if (conceded < 6) return 0.2;
+    if (conceded <= 8) return 0.1;
+    return 0;
+  };
+  const whiteGkBonus = whiteGkId !== null ? gkBonusLevel(blackScore) : 0;
+  const blackGkBonus = blackGkId !== null ? gkBonusLevel(whiteScore) : 0;
   const playerSnapshots = [...currentTeams.white, ...currentTeams.black].map((player) => {
     const team = whiteIds.includes(player.id) ? "white" : "black";
     const goals = goalsByPlayer[player.id] || 0;
     const playerTeamAvg = team === "white" ? whiteAvg : blackAvg;
     const rivalTeamAvg = team === "white" ? blackAvg : whiteAvg;
     const isGoalkeeper = (team === "white" && player.id === whiteGkId) || (team === "black" && player.id === blackGkId);
-    const goalkeeperBonus = (team === "white" && player.id === whiteGkId && whiteGkBonus) || (team === "black" && player.id === blackGkId && blackGkBonus);
+    const goalkeeperBonus = team === "white" && player.id === whiteGkId ? whiteGkBonus :
+                            team === "black" && player.id === blackGkId ? blackGkBonus : 0;
     const delta = calculateRatingDelta({ team, winner, goals, isMvp: player.id === mvpId, isGoalkeeper, goalkeeperBonus, playerTeamAvg, rivalTeamAvg });
     const stored = state.players.find((item) => item.id === player.id);
     stored.level = clamp(Number((stored.level + delta).toFixed(2)), MIN_LEVEL, MAX_LEVEL);
@@ -1302,7 +1307,8 @@ function calculateRatingDelta({ team, winner, goals, isMvp, isGoalkeeper, goalke
   const rivalMultiplier = clamp(0.75 + rivalTeamAvg / MAX_LEVEL, 0.75, 1.75);
   const goalDelta = goals * GOAL_WEIGHT * rivalMultiplier;
   const mvpDelta = isMvp ? MVP_WEIGHT * rivalMultiplier : 0;
-  const gkDelta = goalkeeperBonus ? GOALKEEPER_BONUS_WEIGHT * rivalMultiplier : 0;
+  // goalkeeperBonus is now a direct value (0, 0.1 or 0.2), not a boolean
+  const gkDelta = Number(goalkeeperBonus) || 0;
   return Number((resultDelta + goalDelta + mvpDelta + gkDelta).toFixed(2));
 }
 
