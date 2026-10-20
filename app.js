@@ -259,6 +259,7 @@ function normalizeState() {
 }
 
 // ── Supabase ─────────────────────────────────────────────────────
+// Full sync: resets everything (used after saving a match or explicit refresh)
 async function syncFromSupabase(showMessage = true) {
   if (!currentGroup) return;
   try {
@@ -272,13 +273,33 @@ async function syncFromSupabase(showMessage = true) {
     state.matches = mapRemoteMatches(remoteMatches, remoteMatchPlayers);
     selectedIds = new Set([...selectedIds].filter((id) => state.players.some((p) => p.id === id)));
     currentTeams = null;
+    goalkeeperIds = { white: null, black: null };
     await loadPendingMatchesRemote();
-    // Restore teams only if match tab is active
-    const matchTabActive = document.querySelector('[data-tab="match"]')?.classList.contains("active");
-    if (matchTabActive) loadCurrentTeamsLocal();
+    loadCurrentTeamsLocal();
     saveAndRender(showMessage ? "Datos actualizados desde Supabase" : "");
   } catch (error) {
     showToast(`No se pudo cargar Supabase: ${error.message}`);
+  }
+}
+
+// Soft sync: only refreshes players/matches, preserves currentTeams and pendingMatches
+async function softSyncFromSupabase() {
+  if (!currentGroup) return;
+  try {
+    const groupFilter = `group_id=eq.${currentGroup.id}`;
+    const [remotePlayers, remoteMatches, remoteMatchPlayers] = await Promise.all([
+      supabaseRequest(`players?select=*&${groupFilter}&order=name.asc`),
+      supabaseRequest(`matches?select=*&${groupFilter}&order=created_at.desc`),
+      supabaseRequest("match_players?select=*&order=id.asc"),
+    ]);
+    state.players = remotePlayers.map(mapRemotePlayer);
+    state.matches = mapRemoteMatches(remoteMatches, remoteMatchPlayers);
+    selectedIds = new Set([...selectedIds].filter((id) => state.players.some((p) => p.id === id)));
+    // Do NOT reset currentTeams or pendingMatches — preserve local state
+    renderAll();
+  } catch (error) {
+    // Silent fail on background sync
+    console.warn("Soft sync failed:", error.message);
   }
 }
 
@@ -1526,5 +1547,5 @@ if (savedGroup && GROUPS[savedGroup]) {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") syncFromSupabase(false);
+  if (document.visibilityState === "visible") softSyncFromSupabase();
 });
